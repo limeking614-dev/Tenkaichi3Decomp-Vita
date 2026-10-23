@@ -59,12 +59,27 @@ jobs:
 
       - name: Build the VPK
         run: |
+          set -o pipefail
           export PATH=$VITASDK/bin:$PATH
           git clone --depth 1 https://github.com/vitasdk/samples "$HOME/vitasdk-samples"
-          VITA_SAMPLES="$HOME/vitasdk-samples" python3 port/vita/build.py
+          VITA_SAMPLES="$HOME/vitasdk-samples" python3 port/vita/build.py 2>&1 | tee build.log
+
+      - name: Where did the build put its files
+        if: always()
+        run: |
+          echo "--- vpk files:"; find . -name '*.vpk' -not -path './.git/*' -exec ls -l {} \; || true
+          echo "--- port/build:"; ls -la port/build port/build/vita_rel 2>&1 || true
+          echo "--- last lines of the build:"; tail -n 40 build.log 2>&1 || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: Tenkaichi3Decomp-Vita-vpk
-          path: port/build/vita_rel/Tenkaichi3Decomp-Vita.vpk
+          path: port/build/**/*.vpk
           if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
