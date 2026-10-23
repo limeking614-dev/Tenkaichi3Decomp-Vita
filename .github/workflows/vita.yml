@@ -48,8 +48,14 @@ jobs:
           git clone --depth 1 https://github.com/vitasdk/vdpm /tmp/vdpm
           cd /tmp/vdpm
           sudo -E ./bootstrap-vitasdk.sh
-          sudo -E ./install-all.sh
-          sudo chown -R "$(id -u):$(id -g)" /usr/local/vitasdk
+          export PATH=$VITASDK/bin:$PATH
+          echo "--- VitaSDK bin:"; ls -l "$VITASDK/bin" | head -60
+          # the package client (pacman) must be runnable by the next step
+          sudo chmod -R a+rX "$VITASDK"
+          sudo find "$VITASDK/bin" -type f -exec chmod a+x {} +
+          sudo chown -R "$(id -u):$(id -g)" "$VITASDK"
+          cd /tmp/vdpm
+          ./install-all.sh
 
       - name: vitaGL (with this port's changes)
         run: |
