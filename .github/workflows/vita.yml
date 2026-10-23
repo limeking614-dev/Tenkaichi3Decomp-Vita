@@ -1,0 +1,70 @@
+# Builds the PS Vita / PS TV VPK on GitHub's machines.
+#   Run it from the Actions tab: "vita" -> "Run workflow". The VPK is the "Tenkaichi3Decomp-Vita-vpk" artifact of the run.
+#   No disc and no game data are involved.
+name: vita
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [vita]
+    paths-ignore: ["docs/**", "**.md", "LICENSE"]
+
+concurrency:
+  group: vita-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      VITASDK: /usr/local/vitasdk
+    steps:
+      - uses: actions/checkout@v4
+
+      # clang / LLVM 22 and its Python bindings: ptr32.py and srcfix.py are written against that version
+      # (the same as port/release/Dockerfile)
+      - name: Install build tools and LLVM 22
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg build-essential python3 python3-pip git cmake make
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/jammy/ llvm-toolchain-jammy-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-22 llvm-22 libclang-22-dev python3-clang-22
+          echo "BT3_LIBCLANG=$(ls /usr/lib/llvm-22/lib/libclang-22.so* | head -n1)" >> "$GITHUB_ENV"
+          echo "BT3_CLANG_PY=$(dirname "$(dirname "$(dpkg -L python3-clang-22 | grep 'cindex.py$' | head -n1)")")" >> "$GITHUB_ENV"
+
+      # VitaSDK with all its packages (zlib, math-neon, vitaShaRK, SceShaccCgExt, taihen ...); kept between runs
+      - name: Restore VitaSDK
+        id: sdkcache
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/vitasdk
+          key: vitasdk-${{ runner.os }}-v1
+      - name: Install VitaSDK
+        if: steps.sdkcache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/vitasdk/vdpm /tmp/vdpm
+          cd /tmp/vdpm
+          sudo -E ./bootstrap-vitasdk.sh
+          sudo -E ./install-all.sh
+          sudo chown -R "$(id -u):$(id -g)" /usr/local/vitasdk
+
+      - name: vitaGL (with this port's changes)
+        run: |
+          export PATH=$VITASDK/bin:$PATH
+          sudo chown -R "$(id -u):$(id -g)" "$VITASDK"
+          port/vita/vitagl/build_vitagl.sh
+
+      - name: Build the VPK
+        run: |
+          export PATH=$VITASDK/bin:$PATH
+          git clone --depth 1 https://github.com/vitasdk/samples "$HOME/vitasdk-samples"
+          VITA_SAMPLES="$HOME/vitasdk-samples" python3 port/vita/build.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tenkaichi3Decomp-Vita-vpk
+          path: port/build/vita_rel/Tenkaichi3Decomp-Vita.vpk
+          if-no-files-found: error
