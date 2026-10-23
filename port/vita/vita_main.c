@@ -1393,6 +1393,7 @@ int __wrap_main(int argc, char **argv) {
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
     sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+    sceCtrlSetSamplingModeExt(SCE_CTRL_MODE_ANALOG_WIDE); /* DualShock L2 / R2 / L3 / R3 and a second pad (PS TV) */
     psvDebugScreenInit();
     sceIoMkdir("ux0:data", 0777);
     sceIoMkdir(HOME, 0777);
