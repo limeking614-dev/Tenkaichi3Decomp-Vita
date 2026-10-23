@@ -60,36 +60,63 @@ void Vita_Pace(int lateUs) {
 /* ---- the pad: the Vita's buttons and sticks as the game's first controller (the libpad2 packet of
    port/src/gs/gs_input.c: two bytes of buttons, active low, then right x / y, left x / y). The Vita has no L2 / R2:
    they are SELECT + L / R, or the touch panels (vita_touch.c). ---- */
-enum { B_SELECT = 0x0001, B_START = 0x0008, B_UP = 0x0010, B_RIGHT = 0x0020, B_DOWN = 0x0040, B_LEFT = 0x0080, B_L2 = 0x0100, B_R2 = 0x0200,
+enum { B_SELECT = 0x0001, B_L3 = 0x0002, B_R3 = 0x0004, B_START = 0x0008, B_UP = 0x0010, B_RIGHT = 0x0020, B_DOWN = 0x0040, B_LEFT = 0x0080, B_L2 = 0x0100, B_R2 = 0x0200,
        B_L1 = 0x0400, B_R1 = 0x0800, B_TRIANGLE = 0x1000, B_CIRCLE = 0x2000, B_CROSS = 0x4000, B_SQUARE = 0x8000 };
 
-int Port_PadRead(int socket, unsigned char *data) {
+/* ---- the second controller (PS TV, or a Vita with a pad paired as port 1) ----
+   The PS TV has no touch panels but takes up to four DualShock 3 / 4: port 0 is the first pad, port 1 the second. The
+   game's second controller socket is "connected" only while a pad is paired to port 1 (the Versus menu's
+   "Multiplayer" entry follows that, DuelMenu_Update). sceCtrlPeekBufferPositiveExt2 also reports L2 / R2 / L3 / R3 of
+   a DualShock, so a pad needs neither the rear touch pad nor SELECT + L / R for them. */
+int Vita_Pad2Present(void) {
+    static int present, countdown;
+    SceCtrlPortInfo info;
+
+    if (countdown-- > 0) { /* ask the system about twice a second, not on every read */
+        return present;
+    }
+    countdown = 30;
+    memset(&info, 0, sizeof(info));
+    present = sceCtrlGetControllerPortInfo(&info) >= 0 && info.port[1] != SCE_CTRL_TYPE_UNPAIRED;
+    return present;
+}
+
+static unsigned ps2_buttons(unsigned vita, int socket) {
     static const struct { unsigned vita, ps2; } map[] = {
         {SCE_CTRL_START, B_START}, {SCE_CTRL_UP, B_UP}, {SCE_CTRL_RIGHT, B_RIGHT}, {SCE_CTRL_DOWN, B_DOWN}, {SCE_CTRL_LEFT, B_LEFT},
-        {SCE_CTRL_TRIANGLE, B_TRIANGLE}, {SCE_CTRL_CIRCLE, B_CIRCLE}, {SCE_CTRL_CROSS, B_CROSS}, {SCE_CTRL_SQUARE, B_SQUARE}};
-    SceCtrlData pad;
+        {SCE_CTRL_TRIANGLE, B_TRIANGLE}, {SCE_CTRL_CIRCLE, B_CIRCLE}, {SCE_CTRL_CROSS, B_CROSS}, {SCE_CTRL_SQUARE, B_SQUARE},
+        {SCE_CTRL_L2, B_L2}, {SCE_CTRL_R2, B_R2}, {SCE_CTRL_L3, B_L3}, {SCE_CTRL_R3, B_R3}};
     unsigned btn = 0, i;
 
-    if (socket != 0) {
+    for (i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+        if (vita & map[i].vita) {
+            btn |= map[i].ps2;
+        }
+    }
+    if (socket == 0 && (vita & SCE_CTRL_SELECT)) { /* SELECT + L / R = L2 / R2; SELECT alone = SELECT */
+        if (vita & SCE_CTRL_LTRIGGER) { btn |= B_L2; }
+        if (vita & SCE_CTRL_RTRIGGER) { btn |= B_R2; }
+        if (!(vita & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER))) { btn |= B_SELECT; }
+    } else {
+        if (socket == 1 && (vita & SCE_CTRL_SELECT)) { btn |= B_SELECT; }
+        if (vita & SCE_CTRL_LTRIGGER) { btn |= B_L1; }
+        if (vita & SCE_CTRL_RTRIGGER) { btn |= B_R1; }
+    }
+    return btn;
+}
+
+int Port_PadRead(int socket, unsigned char *data) {
+    SceCtrlData pad;
+    unsigned btn;
+
+    if (socket < 0 || socket > 1 || (socket == 1 && !Vita_Pad2Present())) {
         return 0;
     }
     memset(&pad, 0, sizeof(pad));
     pad.lx = pad.ly = pad.rx = pad.ry = 0x80;
-    sceCtrlPeekBufferPositive(0, &pad, 1);
-    for (i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
-        if (pad.buttons & map[i].vita) {
-            btn |= map[i].ps2;
-        }
-    }
-    if (pad.buttons & SCE_CTRL_SELECT) { /* SELECT + L / R = L2 / R2; SELECT alone = SELECT */
-        if (pad.buttons & SCE_CTRL_LTRIGGER) { btn |= B_L2; }
-        if (pad.buttons & SCE_CTRL_RTRIGGER) { btn |= B_R2; }
-        if (!(pad.buttons & (SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER))) { btn |= B_SELECT; }
-    } else {
-        if (pad.buttons & SCE_CTRL_LTRIGGER) { btn |= B_L1; }
-        if (pad.buttons & SCE_CTRL_RTRIGGER) { btn |= B_R1; }
-    }
-    { /* the touch panels: L2 / R2 on the rear pad or the front corners, the menus on the screen (vita_touch.c) */
+    sceCtrlPeekBufferPositiveExt2(socket, &pad, 1); /* (port 0 on a handheld: its own buttons and sticks) */
+    btn = ps2_buttons(pad.buttons, socket);
+    if (socket == 0) { /* the touch panels: L2 / R2 on the rear pad or the front corners, the menus on the screen (vita_touch.c) */
         extern unsigned Vita_TouchPad(void);
         btn |= Vita_TouchPad();
     }
